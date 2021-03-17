@@ -1,1 +1,5 @@
-# Mean-Reversion
+  This is a mean reversion system that uses customized candlestick pattern. It trades whenever the price of the equity is outside the bollinger bands,50 ema is above the 200 ema,followed by the candlestick confirmation pattern, and must be in confluence with the overbought and oversold signals given by the relative strength index.
+  
+  This strategy uses two candlestick pattern as a price action confirmation. The first is pinbar, but it was tweaked and modify to satisfy what i wanted to happen, in a bullish case scenario: The wick of the candle confirmation must be three times longer compared to the body, the body must also touch atleast 75% of the body; 25% for bearish case scenario. The second price action confirmation is engulfing candlestick bar, The body of candle[1] must be bigger compared to candle[2], candle[1] is the candle after candle[2].
+  
+  I backtested this strategy on 21 currency pairs, focusing only on major and cross pairs, on a 10 year scale starting from January 2010 - January 2020. Only one currency pair appears to be profitable, and that is the eurjpy, despite showing profitableness on a certain pair, i believe it wasn't still good enough since it only produces 200+ trades and a profit of 15%+, for a daytrading strategy this numbers doesn't seem to show any statistical significance.
