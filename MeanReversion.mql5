@@ -1,0 +1,934 @@
+//+------------------------------------------------------------------+
+//|                                               MEAN_REVERSION.mq5 |
+//|                        Copyright 2021, MetaQuotes Software Corp. |
+//|                                             https://www.mql5.com |
+//+------------------------------------------------------------------+
+#property copyright "Renz Carillo"
+#property link      "https://www.circbrand.com" // wala akong website :(
+#property version   "1.00"
+//+------------------------------------------------------------------+
+//| Expert initialization function                                   |
+//+------------------------------------------------------------------+
+#include <Trade\Trade.mqh>
+#include <stdliberr.mqh>
+#include <errordescription.mqh>
+//#include <stdlib.mqh>
+CTrade trade;
+
+//---INPUTS-------------------------//
+
+// INPUT THE VALUE OF RISK PER TRADE
+input string Risk = "----RISK SETTINGS----";
+input double riskPerTrade = 0.1;
+
+// A VALUE OF 1 WILL HAVE 1:1 RISK REWARD RATIO
+input double takeProfitMultiple = 2.1;  
+
+// OPTIMIZABLE VALUES
+input string Optimize = "----OPTIMIZE SETTINGS----";
+input int rsiOverboughtSignal = 70;
+input int rsiOversoldSignal = 30;
+
+// SPECIFY THE NUMBER MARK FOR THIS ALGO BOT
+input string EA_Identifier = "----IDENTIFIER SETTINGS----";
+input int magicNumber = 133133;
+
+// EXIT STRATEGIES\
+input string Exit_Strategy = "----EXIT SETTINGS----";
+input bool useMoveToBreakeven= false;
+
+// PROP FIRM RULES
+input string Prop_Firm = "----PROP FIRM SETTINGS----";
+
+input bool useClosePositionsOnFriday = true;
+
+input string equityLoss = "-------------------";
+input double equityLossStop = 4.5;
+input bool useDailyLossLimit = false;
+
+input string maximumAbsoluteDrawdownLoss = "-------------------";
+input double maximumAbsDrawdownLoss = 9.5;
+input double inpInitialBalance = 10000.00;
+input bool useAbsoluteDrawdownLimit = false;
+
+input string enableTradeAtTime = "-------------------";
+input bool useEnableTradeAtCertainTime = true;
+
+// AGGRESSIVE TRADING STYLE
+input string Aggressive = "----AGGRESSIVE SETTINGS----";
+input double SLinPips = 60;
+input double TPinPips = 3;
+input bool useLowTPHighSL = true;
+
+//---VARIABLES AND ARRAYS---------//
+
+   double middleBollingerBandsArray[]; // Array for bollinger bands; default values would be from left to right
+   double upperBollingerBandsArray[]; // Array for bollinger bands; default values would be from left to right
+   double lowerBollingerBandsArray[]; // Array for bollinger bands; default values would be from left to right
+   double rsiArray[]; // Array for rsi; default values would be from left to right
+   double slowEmaArray[]; // Array for slow ema; default values would be from left to right
+   double fastEmaArray[]; // Array for fast ema; default values would be from left to right
+   
+   // use copy words on these variables to store the array
+   int bollingerBandsBuffer,bollingerBandsBuffer1,bollingerBandsBuffer2,slowEmaBuffer,fastEmaBuffer,rsiBuffer;
+   
+   // these variables handles the indicator in which to attach the array
+   int bollingerBandsHandle,rsiHandle,slowEmaHandle,fastEmaHandle;
+   
+   double Ask,Bid,lotsize;
+   
+   int stopLoss,takeProfit,entrySignal,ticketOrder;
+   
+   double previousMacdSlow,previousMacdFast,currentMacdSlow,currentMacdFast,macd1,macd2,
+   candle1MacdSlow,candle1MacdFast;
+   
+   // this is used for datetime function or no trades today function
+   datetime isTime;
+   
+   // this is used for close all symbol positions on friday function
+   datetime time;
+   string hoursAndMinutes;
+   
+int OnInit()
+  {
+//---HANDLES AND SETTING ARRAY AS SERIES-----//
+
+   ArraySetAsSeries(middleBollingerBandsArray,true); // assign from right to left
+   ArraySetAsSeries(upperBollingerBandsArray,true); // assign from right to left
+   ArraySetAsSeries(lowerBollingerBandsArray,true); // assign from right to left
+   ArraySetAsSeries(fastEmaArray,true); // assign from right to left
+   ArraySetAsSeries(slowEmaArray,true); // assign from right to left
+   ArraySetAsSeries(rsiArray,true); // assign from right to left
+
+//--- BOLLINGER BANDS HANDLE---//
+
+   bollingerBandsHandle = iBands(_Symbol,_Period,20,0,2.00,PRICE_CLOSE); // bollinger bands definition
+   //--- if the handle is not created
+   if(bollingerBandsHandle==INVALID_HANDLE)
+     {
+      //--- tell about the failure and output the error code
+      PrintFormat("Failed to create handle of the bollinger bands indicator for the symbol %s/%s, error code %d",
+                  _Symbol,
+                  EnumToString(Period()),
+                  GetLastError());
+      //--- the indicator is stopped early
+      return(INIT_FAILED);
+     }
+     
+//--- RSI HANDLE---//  
+
+   rsiHandle = iRSI(_Symbol,PERIOD_CURRENT,14,PRICE_CLOSE); // rsi definition
+     if(rsiHandle==INVALID_HANDLE)
+     {
+      //--- tell about the failure and output the error code
+      PrintFormat("Failed to create handle of the rsi indicator for the symbol %s/%s, error code %d",
+                  _Symbol,
+                  EnumToString(Period()),
+                  GetLastError());
+      //--- the indicator is stopped early
+      return(INIT_FAILED);
+     }  
+     
+//---SLOW EMA HANDLE---//  
+
+   slowEmaHandle = iMA(_Symbol,PERIOD_CURRENT,200,0,MODE_EMA,PRICE_CLOSE); // slow ema definition
+     if(slowEmaHandle==INVALID_HANDLE)
+     {
+      //--- tell about the failure and output the error code
+      PrintFormat("Failed to create handle of the slow ema indicator for the symbol %s/%s, error code %d",
+                  _Symbol,
+                  EnumToString(Period()),
+                  GetLastError());
+      //--- the indicator is stopped early
+      return(INIT_FAILED);
+     }  
+     
+//---FAST EMA HANDLE---//  
+
+   fastEmaHandle = iMA(_Symbol,PERIOD_CURRENT,50,0,MODE_EMA,PRICE_CLOSE); // fast ema definition
+     if(fastEmaHandle==INVALID_HANDLE)
+     {
+      //--- tell about the failure and output the error code
+      PrintFormat("Failed to create handle of the fast ema indicator for the symbol %s/%s, error code %d",
+                  _Symbol,
+                  EnumToString(Period()),
+                  GetLastError());
+      //--- the indicator is stopped early
+      return(INIT_FAILED);
+     }  
+//---
+   return(INIT_SUCCEEDED);
+  }
+//+------------------------------------------------------------------+
+//| Expert deinitialization function                                 |
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason)
+  {
+//---
+   
+  }
+//+------------------------------------------------------------------+
+//| Expert tick function                                             |
+//+------------------------------------------------------------------+
+void OnTick()
+  {
+//-----------------------------------------DECLARATION OF VARIABLES-----------------------------------------//
+
+  Ask = NormalizeDouble(SymbolInfoDouble(_Symbol,SYMBOL_ASK),_Digits);
+  Bid = NormalizeDouble(SymbolInfoDouble(_Symbol,SYMBOL_BID),_Digits);
+  isTime = iTime(_Symbol,PERIOD_CURRENT,0);
+  time = TimeCurrent(); 
+ 
+  double highArray[];
+  ArraySetAsSeries(highArray,true);
+  int highCopy = CopyHigh(_Symbol,_Period,0,11,highArray);
+   
+  double lowArray[];
+  ArraySetAsSeries(lowArray,true);
+  int lowCopy = CopyLow(_Symbol,_Period,0,11,lowArray);
+
+  bollingerBandsBuffer = CopyBuffer(bollingerBandsHandle,0,0,5,middleBollingerBandsArray); // 0 buffer = middle bollinger
+  bollingerBandsBuffer1 = CopyBuffer(bollingerBandsHandle,1,0,5,upperBollingerBandsArray); // 1 buffer = upper bollinger
+  bollingerBandsBuffer2 = CopyBuffer(bollingerBandsHandle,2,0,5,lowerBollingerBandsArray); // 2 buffer = lower bollinger
+  slowEmaBuffer= CopyBuffer(slowEmaHandle,0,0,5,slowEmaArray); // assign the slowemaarray with the slowemahandle
+  fastEmaBuffer= CopyBuffer(fastEmaHandle,0,0,5,fastEmaArray); // assign the fastemaarray with the fastemahandle
+  rsiBuffer= CopyBuffer(rsiHandle,0,0,5,rsiArray); // assign the rsiarray with the rsihandle
+ 
+  double upperBollinger = upperBollingerBandsArray[1];
+  double lowerBollinger = lowerBollingerBandsArray[1];
+  double slowEma = slowEmaArray[1];
+  double fastEma = fastEmaArray[1];
+  double rsi = rsiArray[1];
+
+//--- STOP LOSS COMPUTATION ----------------------------------------------
+ 
+  int digit = (int)(SymbolInfoInteger(_Symbol,SYMBOL_DIGITS));
+  double buyStopLoss = 0.0;
+  double sellStopLoss =0.0;
+ 
+  if (digit == 5 || digit == 4)
+  {
+  buyStopLoss = ((Ask - lowArray[1]) + ((Ask - Bid) * 0.50)) * 10000;
+  }
+  else if (digit == 3 || digit == 2)
+  {
+  buyStopLoss = ((Ask - lowArray[1]) + ((Ask - Bid) * 0.50)) * 100;
+  }
+ 
+  if (digit == 5 || digit == 4)
+  {
+  sellStopLoss = ((highArray[1] - Bid) + ((Ask - Bid) * 0.50)) * 10000;
+  }
+  else if (digit == 3 || digit == 2)
+  {
+  sellStopLoss = ((highArray[1] - Bid) + ((Ask - Bid) * 0.50)) * 100;
+  }
+ 
+// ----------------------------------------------------------------------------------  
+
+  double buyTakeProfit = (buyStopLoss * takeProfitMultiple) ;
+  double sellTakeProfit = (sellStopLoss * takeProfitMultiple) ;  
+       
+//-----------------------------------------ENTRY SIGNAL-----------------------------------------//  
+
+   //---USE HIGH SL LOW TP (AGGRESSIVE STYLE) ---// 
+  /* datetime time1 = TimeLocal();
+   datetime time2 = TimeTradeServer(); 
+   Comment("time current is", time,"time local is\n", time1,"time tradeserver is\n", time2,"itime is\n",isTime); */
+   if (useLowTPHighSL == true){
+      if (PositionsTotal() == 0 && OrdersTotal()==0) // THERE IS NO OPEN POSITION
+      {
+         if (
+         (customPinbar() == "up" || customEngulfingCandle() == 1)
+         && rsiArray[1] < rsiOversoldSignal
+         && slowEmaArray[1] < fastEmaArray[1]
+         && oneTradePerCandle(isTime) == true // TRUE MEANS ONLY 1 TRADE PER DAY; IF REMOVE THIS FUNCTION ADD // AT THE FRONT
+         && lowerBollinger > lowArray[1]
+         && enableTrade(time) == useEnableTradeAtCertainTime //FTMO CLOSES TRADING AT 22:55-00:00, SO I MIGHT AS WELL ADD THIS
+         )
+   
+         {
+         ticketOrder = trade.Buy(
+         calculateLotSize(SLinPips)
+         ,_Symbol
+         ,Ask
+         ,Ask-(SLinPips*getPipValue())
+         ,Ask+(TPinPips*getPipValue()));
+         }
+   
+         else if (
+         (customPinbar() == "down" || customEngulfingCandle() == 2)
+         && rsiArray[1] > rsiOverboughtSignal
+         && slowEmaArray [1] > fastEmaArray[1]
+         && oneTradePerCandle(isTime) == true // TRUE MEANS ONLY 1 TRADE PER DAY; IF REMOVE THIS FUNCTION ADD // AT THE FRONT
+         && upperBollinger < highArray[1]
+         && enableTrade(time) == useEnableTradeAtCertainTime //FTMO CLOSES TRADING AT 22:55-00:00, SO I MIGHT AS WELL ADD THIS
+         )
+   
+         {
+         ticketOrder = trade.Sell(
+         calculateLotSize(SLinPips)
+         ,_Symbol
+         ,Bid
+         ,Bid+(SLinPips*getPipValue())
+         ,Bid-(TPinPips*getPipValue()));
+         }
+      }
+   }
+   
+   else if (useLowTPHighSL == false){
+      if (PositionsTotal() == 0 && OrdersTotal()==0) // THERE IS NO OPEN POSITION
+      {
+         if (
+         (customPinbar() == "up" || customEngulfingCandle() == 1)
+         && rsiArray[1] < rsiOversoldSignal
+         && slowEmaArray[1] < fastEmaArray[1]
+         && oneTradePerCandle(isTime) == true // TRUE MEANS ONLY 1 TRADE PER DAY; IF REMOVE THIS FUNCTION ADD // AT THE FRONT
+         && lowerBollinger > lowArray[1]
+         && enableTrade(time) == useEnableTradeAtCertainTime //FTMO CLOSES TRADING AT 22:55-00:00, SO I MIGHT AS WELL ADD THIS
+         )
+   
+         {
+         ticketOrder = trade.Buy(
+         calculateLotSize(buyStopLoss)
+         ,_Symbol
+         ,Ask
+         ,Ask-(buyStopLoss*getPipValue())
+         ,Ask+(buyTakeProfit*getPipValue()));
+         }
+   
+         else if (
+         (customPinbar() == "down" || customEngulfingCandle() == 2)
+         && rsiArray[1] > rsiOverboughtSignal
+         && slowEmaArray [1] > fastEmaArray[1]
+         && oneTradePerCandle(isTime) == true // TRUE MEANS ONLY 1 TRADE PER DAY; IF REMOVE THIS FUNCTION ADD // AT THE FRONT
+         && upperBollinger < highArray[1]
+         && enableTrade(time) == useEnableTradeAtCertainTime //FTMO CLOSES TRADING AT 22:55-00:00, SO I MIGHT AS WELL ADD THIS
+         )
+   
+         {
+         ticketOrder = trade.Sell(
+         calculateLotSize(sellStopLoss)
+         ,_Symbol
+         ,Bid
+         ,Bid+(sellStopLoss*getPipValue())
+         ,Bid-(sellTakeProfit*getPipValue()));
+         }
+      }
+   }
+     
+   
+///---USE MOVE TO BREAKEVEN FUNCTION-----  
+
+   if (useMoveToBreakeven == true){
+   breakEvenStopLoss(Ask,Bid);
+   }
+   
+///---USE CLOSE ALL POSITIONS ON FRIDAY EVENING-----  
+
+   DayOfWeekMQL4();
+   hoursAndMinutes = TimeToString(time,TIME_MINUTES);
+   
+   //CLOSE ALL POSITIONS AT 22:45
+   if (useClosePositionsOnFriday == true
+   && (StringSubstr(hoursAndMinutes,0,5)) >= "20:45" // CLOSE ALL POSITIONS & ORDERS AT 10:45PM
+   && DayOfWeekMQL4() == 5 // 5 REPRESENTS FRIDAY
+   )
+   {
+   CloseThisSymbolAll();
+   }
+   
+//---USE DAILY LOSS LIMIT FUNCTION (FTMO RULE)---//  
+   
+   // THIS IS THE MAXIMUM DRAWDOWN THE BOT CAN ACHIEVE IN A DAY
+   double dailyLossLimitInput = equityLossStop;
+   
+   if (useDailyLossLimit == true)
+   {
+   dailyLossLimit(dailyLossLimitInput);
+   }  
+   
+//---USE ABSOLUTE DRAWDOWN LIMIT FUNCTION (FTMO RULE) ---//
+
+   //THIS IS THE MAXIMUM DRAWDON THE BOT CAN ACHIEVE IN ITS LIFETIME
+   double absoluteDrawdownLimitInput = maximumAbsDrawdownLoss;
+   
+   //THIS IS THE INITIAL BALANCE
+   double initialBalance = inpInitialBalance;
+   
+   if (useAbsoluteDrawdownLimit == true)
+   {
+   absoluteDrawdownLimit(absoluteDrawdownLimitInput,initialBalance);
+   }  
+     
+  }
+ 
+//+------------------------------------------------------------------+
+//-----------------------------------------LIST OF FUNCTIONS-----------------------------------------//
+
+//--- CUSTOM PINBAR FUNCTION -----------------------------
+
+string customPinbar () {
+
+   double highArray[];
+   ArraySetAsSeries(highArray,true);
+   int highCopy = CopyHigh(_Symbol,_Period,0,11,highArray);
+   
+   double lowArray[];
+   ArraySetAsSeries(lowArray,true);
+   int lowCopy = CopyLow(_Symbol,_Period,0,11,lowArray);
+   
+   double closeArray[];
+   ArraySetAsSeries(closeArray,true);
+   int closeCopy = CopyClose(_Symbol,_Period,0,11,closeArray);
+   
+   double openArray[];
+   ArraySetAsSeries(openArray,true);
+   int openCopy = CopyOpen(_Symbol,_Period,0,11,openArray);
+   
+   string signal;
+   
+//--- BULLISH CANDLE CONFIRMATION ------------------------------------------------------------
+     
+      // CONFIRMATION CANDLE IS IN THE TROUGH
+      if (lowArray[1] < lowArray [2] && lowArray[1] < lowArray [3] && lowArray[1] < lowArray [4] && lowArray[1] < lowArray [5] && lowArray[1] < lowArray [6]){
+     
+         // WICK IS WIDER THAN THE BODY ATLEAST X3 (BEAR CANDLE CLOSE)
+         if (((closeArray[1] - lowArray[1]) > ((openArray[1] - closeArray[1]) * 3))
+         &&
+         
+         // RANGE OF THE BODY IS AT THE UPPER PART OF THE CANDLE; PART OF 75% (BEAR CANDLE CLOSE)
+         (  ((((highArray[1]-lowArray[1]) * 0.75) + lowArray[1]) < closeArray[1])
+         ||  ((((highArray[1]-lowArray[1]) * 0.75) + lowArray[1]) > closeArray[1]))
+         &&
+         ((((highArray[1]-lowArray[1]) * 0.75) + lowArray[1]) < openArray[1]))  
+         
+            {
+            signal = "up";
+            //ObjectCreate(_Symbol,"arrowUp",OBJ_ARROW_UP,0,0,lowArray[1]);
+            }
+         
+         // WICK IS WIDER THAN THE BODY ATLEAST X3 (BULL CANDLE CLOSE)
+         else if (((openArray[1] - lowArray[1]) > ((closeArray[1] - openArray[1]) * 3))
+         &&
+         
+         // RANGE OF THE BODY IS AT THE UPPER PART OF THE CANDLE; PART OF 75% (BULL CANDLE CLOSE)
+         (((((highArray[1]-lowArray[1]) * 0.75) + lowArray[1]) < openArray[1])
+         ||  ((((highArray[1]-lowArray[1]) * 0.75) + lowArray[1]) > openArray[1]))
+         &&
+         ((((highArray[1]-lowArray[1]) * 0.75) + lowArray[1]) < closeArray[1]))
+             
+            {
+            signal = "up";
+            //ObjectCreate(_Symbol,"arrowUp",OBJ_ARROW_UP,0,0,lowArray[1]);
+            }  
+         }
+     
+//--- BEARISH CANDLE CONFIRMATION --------------------------------------------------------------------
+     
+      // CONFIRMATION CANDLE IS IN THE PEAK
+      if (highArray[1] > highArray [2] && highArray[1] > highArray [3] && highArray[1] > highArray [4] && highArray[1] > highArray [5] && highArray[1] > highArray [6]){
+      //Comment("this arrow down is working(1)");
+     
+         // WICK IS WIDER THAN THE BODY ATLEAST X3 (BEAR CANDLE CLOSE)
+         if (((highArray[1] - openArray[1]) > ((openArray[1] - closeArray[1]) * 3))
+         &&
+         
+         // RANGE OF THE BODY IS AT THE UPPER PART OF THE CANDLE; PART OF 75% (BEAR CANDLE CLOSE) //
+         (((((highArray[1]-lowArray[1]) * 0.25) + lowArray[1]) < openArray[1])
+         || ((((highArray[1]-lowArray[1]) * 0.25) + lowArray[1]) > openArray[1]))
+         &&
+         ((((highArray[1]-lowArray[1]) * 0.25) + lowArray[1]) > closeArray[1]))
+         
+            {
+            signal = "down";
+            //ObjectCreate(_Symbol,"arrowDown",OBJ_HLINE,0,0,highArray[1]);
+            //Comment("this arrow down is working(4)");
+            }
+         
+         // WICK IS WIDER THAN THE BODY ATLEAST X3 (BULL CANDLE CLOSE)
+         else if (((highArray[1] - closeArray[1]) > ((closeArray[1] - openArray[1]) * 3))
+         &&
+         
+         // RANGE OF THE BODY IS AT THE UPPER PART OF THE CANDLE; PART OF 75% (BULL CANDLE CLOSE)
+         (((((highArray[1]-lowArray[1]) * 0.25) + lowArray[1]) < closeArray[1])
+         || ((((highArray[1]-lowArray[1]) * 0.25) + lowArray[1]) > closeArray[1]))
+         &&
+         ((((highArray[1]-lowArray[1]) * 0.25) + lowArray[1]) > openArray[1]))
+           
+            {
+            signal = "down";
+            //ObjectCreate(_Symbol,"arrowDown",OBJ_HLINE,0,0,highArray[1]);
+            }
+         }
+      return (signal);
+   }
+   
+//--- CUSTOM ENGULFING CANDLE FUNCTION -----------------------------
+
+int customEngulfingCandle()
+  {
+ 
+   double highArray[];
+   ArraySetAsSeries(highArray,true);
+   int highCopy = CopyHigh(_Symbol,_Period,0,11,highArray);
+   
+   double lowArray[];
+   ArraySetAsSeries(lowArray,true);
+   int lowCopy = CopyLow(_Symbol,_Period,0,11,lowArray);
+   
+   double closeArray[];
+   ArraySetAsSeries(closeArray,true);
+   int closeCopy = CopyClose(_Symbol,_Period,0,11,closeArray);
+   
+   double openArray[];
+   ArraySetAsSeries(openArray,true);
+   int openCopy = CopyOpen(_Symbol,_Period,0,11,openArray);
+   
+   int signal = 0;
+   
+//--- BULLISH ENGULFING = PREVIOUS BEAR CANDLE
+
+  // LEFT EYE IS BEARISH CANDLE
+  if (closeArray[2] < openArray[2])
+
+   // CONFIRMATION CANDLE IS IN THE TROUGH
+   if (lowArray[1] < lowArray [2] && lowArray[1] < lowArray [3] && lowArray[1] < lowArray [4] && lowArray[1] < lowArray [5] && lowArray [1] < lowArray [6]){
+ 
+      if(lowArray [1] < lowArray [2]
+      && highArray [1] > highArray [2]
+      && closeArray [1] > openArray [2]
+      && openArray [1] < closeArray [2] ){
+      signal = 1 ;
+      }
+   }
+   
+//--- BULLISH ENGULFING = PREVIOUS BULL CANDLE
+
+  // LEFT EYE IS BULLISH CANDLE
+  if (closeArray[2] > openArray[2])
+   
+   // CONFIRMATION CANDLE IS IN THE TROUGH
+   if (lowArray[1] < lowArray [2] && lowArray[1] < lowArray [3] && lowArray[1] < lowArray [4] && lowArray[1] < lowArray [5] && lowArray [1] < lowArray [6]){
+ 
+      if(lowArray [1] < lowArray [2]
+      && highArray [1] > highArray [2]
+      && closeArray [1] > closeArray [2]
+      && openArray [1] < openArray [2] ){
+      signal = 1 ;
+      }
+   }
+     
+//--- BEARISH ENGULFING = PREVIOUS BEAR CANDLE
+   
+   // LEFT EYE IS BEARISH CANDLE
+   if (closeArray[2] < openArray[2])
+   
+    // CONFIRMATION CANDLE IS IN THE PEAK
+    if (highArray[1] > highArray [2] && highArray[1] > highArray [3] && highArray[1] > highArray [4] && highArray[1] > highArray [5] && highArray[1] > highArray [6]){
+     
+      if(lowArray [1] < lowArray [2]
+      && highArray [1] > highArray [2]
+      && closeArray [1] < closeArray [2]
+      && openArray [1] > openArray [2] ){
+      signal = 2 ;
+      }  
+   }
+   
+//--- BEARISH ENGULFING = PREVIOUS BULL CANDLE
+
+  // LEFT EYE IS BULLISH CANDLE
+  if (closeArray[2] > openArray[2])
+
+    // CONFIRMATION CANDLE IS IN THE PEAK
+    if (highArray[1] > highArray [2] && highArray[1] > highArray [3] && highArray[1] > highArray [4] && highArray[1] > highArray [5] && highArray[1] > highArray [6]){
+     
+      if(lowArray [1] < lowArray [2]
+      && highArray [1] > highArray [2]
+      && closeArray [1] < openArray [2]
+      && openArray [1] > closeArray [2] ){
+      signal = 2 ;
+      }  
+   }
+//---
+      return(signal);
+   }
+
+//---LOTSIZE FUNCTION---//
+
+double calculateLotSize(double inputStopLoss) // type the stopLoss inside the parameter
+{
+   
+    // Fetch some symbol properties
+    double lotStep = (SymbolInfoDouble(_Symbol,SYMBOL_VOLUME_STEP));
+    double minLot  = (SymbolInfoDouble(_Symbol,SYMBOL_VOLUME_MIN));
+    double maxLot  = (SymbolInfoDouble(_Symbol,SYMBOL_VOLUME_MAX));
+    double tickVal = (SymbolInfoDouble(_Symbol,SYMBOL_TRADE_TICK_VALUE));
+ 
+    // Calculate the actual lot size
+    double lotSize = AccountInfoDouble(ACCOUNT_BALANCE) * riskPerTrade / 100 / (inputStopLoss * tickVal);
+ 
+    return MathMin(maxLot,MathMax(minLot,NormalizeDouble(lotSize / lotStep, 0) * lotStep // This rounds the lotSize to the nearest lotstep interval
+        )
+    );
+}
+
+//---GET PIP VALUE FUNCTION---//
+
+double getPipValue()
+{
+int digit = (int)(SymbolInfoInteger(_Symbol,SYMBOL_DIGITS));
+double result = 0.0;
+if (digit == 5 || digit == 4)
+{
+result = 0.0001;
+}
+else if (digit == 3 || digit == 2)
+{
+result = 0.01;
+}
+return result;
+}
+
+//---NO TRADES TODAY FUNCTION---//
+
+bool oneTradePerCandle(datetime inputTime)
+  {
+//---
+   ulong inpMagic = 0;
+   string inpSymbol = _Symbol;
+   
+   for(int i=PositionsTotal()-1; i>=0; i--)
+     {
+      if(PositionGetTicket(i)>0)
+         if(PositionGetString(POSITION_SYMBOL)==inpSymbol && PositionGetInteger(POSITION_MAGIC)==inpMagic)
+            if(PositionGetInteger(POSITION_TIME)>=inputTime)
+               return(false);
+     }
+//--- request trade history
+   HistorySelect(inputTime,TimeCurrent());
+   uint     total=HistoryDealsTotal();
+   ulong    ticket=0;
+   string   symbol;
+   ulong    magic;
+//--- for all deals
+   for(uint i=0; i<total; i++)
+     {
+      //--- try to get deals ticket
+      if((ticket=HistoryDealGetTicket(i))>0)
+        {
+         //--- get deals properties
+         symbol=HistoryDealGetString(ticket,DEAL_SYMBOL);
+         magic =(ulong)HistoryDealGetInteger(ticket,DEAL_MAGIC);
+         //--- only for current symbol
+         if(symbol==Symbol() && magic==inpMagic)
+            return(false);
+        }
+     }
+//---
+   return(true);
+  }
+ 
+//---MOVE TO BREAKEVEN FUNCTION---//
+
+   void breakEvenStopLoss(double inputAsk,double inputBid) {
+
+   ulong inpMagic = 0;
+   double orderOpenPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+   double orderStopLoss = PositionGetDouble(POSITION_SL);
+   ulong orderTicket = PositionGetInteger(POSITION_TICKET);
+   double orderTakeProfit = PositionGetDouble(POSITION_TP);
+   
+      for(int i=PositionsTotal()-1; i>=0; i--)
+      {
+         if(PositionGetTicket(i)==0) continue;
+         if(PositionGetTicket(i)>0)
+         {
+            if(
+            PositionGetString(POSITION_SYMBOL)==_Symbol
+            && PositionGetInteger(POSITION_MAGIC)==inpMagic
+            ) {
+               //ORDER TYPE MUST BE THE SAME
+               if ((PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY))
+               {  
+                  // PRICE REACHED 1:1 MOVE SL TO BREAKEVEN    
+                  if (inputAsk>(orderOpenPrice - orderStopLoss + orderOpenPrice) &&
+                  //SINCE WE MOVE THE SL TO BREAKEVEN + ADD HALF PIP TO ACCOUNT FOR SPREAD,
+                  //MEANING THIS COULD ONLY TRIGGER IF PRICE WASN'T MODIFIED YET,
+                  //THUS PREVENTING ORDERMODIFY ERROR 1
+                  //ORDERMODIFY ERROR 1: DOING THE SAME THING OVER & OVER AGAIN WITHOUT CHANGING ANYTHING
+                  (orderStopLoss < orderOpenPrice))
+                  {
+                     trade.PositionModify(
+                     orderTicket //CHOOSE THE CORRECT TICKET
+                     ,(orderOpenPrice + (inputAsk-inputBid)) // SL HAS BEEN CHANGED
+                     ,orderTakeProfit); // TAKE PROFIT NOT CHANGED, ONLY THE STOPLOSS
+                     //Comment("the OrderGetTicket Value is ",orderTicket);
+                     }
+                   }
+                else if((PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_SELL))
+               {  
+                  // PRICE REACHED 1:1 MOVE SL TO BREAKEVEN
+                  if (inputBid < (((orderStopLoss - orderOpenPrice)- orderOpenPrice)*(-1))
+                  //SINCE WE MOVE THE SL TO BREAKEVEN + ADD HALF PIP TO ACCOUNT FOR SPREAD,
+                  //MEANING THIS COULD ONLY TRIGGER IF PRICE WASN'T MODIFIED YET,
+                  //THUS PREVENTING ORDERMODIFY ERROR 1
+                  //ORDERMODIFY ERROR 1: DOING THE SAME THING OVER & OVER AGAIN WITHOUT CHANGING ANYTHING
+                  && (orderStopLoss > orderOpenPrice))
+                  //Comment("the OrderGetTicket Value is ",orderTicket);
+                  {
+                     trade.PositionModify(
+                     orderTicket //CHOOSE THE CORRECT TICKET
+                     ,(orderOpenPrice - (inputAsk-inputBid)) // SL HAS BEEN CHANGED
+                     ,orderTakeProfit);
+                 }
+               }                    
+            }
+         }
+      }
+   }
+     
+//---CLOSE ALL EXISTING POSITION ON FRIDAY FUNCTION (FTMO RULE)---//
+
+void CloseThisSymbolAll()
+  {
+   int positions,orders;
+   ulong inpMagic = 0;
+   ulong ticket = PositionGetInteger(POSITION_TICKET);
+   int orderType = (int)PositionGetInteger(POSITION_TYPE) ;
+   int orderPendingType = (int)OrderGetInteger(ORDER_TYPE);
+   string orderSymbol = PositionGetString(POSITION_SYMBOL);
+   string orderPendingSymbol = OrderGetString(ORDER_SYMBOL);
+   ulong orderPendingTicket = OrderGetInteger(ORDER_TICKET);
+   ulong orderMagicNumber = PositionGetInteger(POSITION_MAGIC);
+   ulong orderPendingMagicNumber = OrderGetInteger(ORDER_MAGIC);
+
+   for(orders=OrdersTotal()-1, positions=PositionsTotal()-1; positions>=0 || orders>=0;positions--,orders--)
+     {
+      ulong numTicket = PositionGetTicket(positions);
+      ulong numOrderTicket = OrderGetTicket(orders);
+
+         if(orderType==POSITION_TYPE_BUY)
+            {
+            trade.PositionClose(numTicket);
+            }
+         if(orderType==POSITION_TYPE_SELL)
+            {
+            trade.PositionClose(numTicket);
+            }
+         if(orderPendingType==ORDER_TYPE_BUY_LIMIT || orderPendingType==ORDER_TYPE_SELL_LIMIT ||
+         orderPendingType==ORDER_TYPE_BUY_STOP||orderPendingType==ORDER_TYPE_SELL_STOP
+         ||orderPendingType==ORDER_TYPE_BUY_STOP_LIMIT||orderPendingType==ORDER_TYPE_SELL_STOP_LIMIT)
+            {
+            trade.OrderDelete(numOrderTicket);
+            }
+        }
+
+     }
+ 
+//---DAY OF THE WEEK FUNCTION---//
+ 
+ int DayOfWeekMQL4()
+ // this must be called in the ontick function since it uses mqldatetime
+  {
+   MqlDateTime tm;
+   TimeCurrent(tm);
+   return(tm.day_of_week);
+  }
+ 
+//---ENABLE TRADE AT CERTAIN TIME (FTMO RULE)---//  
+//---THIS FUNCTION IS SPECIFICALLY DESIGNED FOR FTMO TRADING HOURS---
+
+bool enableTrade(datetime inpTime){
+
+  // inpTime would be declared in the OnTick(), it is: datetime time = TimeCurrent();
+  string theHoursAndMinutes = TimeToString(inpTime,TIME_MINUTES);
+ 
+  if(
+     ((theHoursAndMinutes >= "00:01") //START TRADING AT THIS TIME
+  && (theHoursAndMinutes <= "22:45" //PAUSE WHEN THIS IS REACHED
+  || theHoursAndMinutes >= "23:10")) //CONTINUE AT THIS TIME
+  &&(DayOfWeekMQL4()==2 // THIS IS TUESDAY
+  || DayOfWeekMQL4()==3 // THIS IS WEDNESDAY
+  || DayOfWeekMQL4()==4) // THIS IS THURSDAY
+  )
+  {
+     //Comment("this is working","\n the day today is ", DayOfWeekMQL4());
+     return true;
+  }
+  else if(theHoursAndMinutes >= "00:01" //START TRADING AT THIS TIME
+  && theHoursAndMinutes <= "22:45" //STOP WHEN THIS IS REACHED
+  && DayOfWeekMQL4()==5 // THIS IS FRIDAY
+  )
+  {
+     //Comment("this is working","\nthe day today is ", DayOfWeekMQL4());
+     return true;
+  }
+  else if(theHoursAndMinutes > "00:30" //START TRADING AT THIS TIME
+  && theHoursAndMinutes <= "22:45"     //PAUSE WHEN THIS IS REACHED
+  && DayOfWeekMQL4() == 1                //THIS IS
+  )
+  {
+     //Comment("this is working","\nthe day today is ", DayOfWeekMQL4());
+     return true;
+  }
+  else
+  {
+  return false;
+  }
+}
+
+
+//--- DEACTIVATE BOT IF DAILY EQUITY LOSS REACHED (FTMO RULE)---//
+
+int dailyLossLimit (double inpEquityEquivalent){
+   
+   double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+   double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+   string currentDay = TimeToString(iTime(_Symbol,PERIOD_D1,0));
+   datetime currentTime1 = TimeCurrent();
+   string time1 = TimeToString(currentTime1,TIME_MINUTES);
+   int orderType = (int)PositionGetInteger(POSITION_TYPE) ;
+   int orderPendingType = (int)OrderGetInteger(ORDER_TYPE);
+   static double newdaybalance;
+   int positions,orders;
+   
+   //GET THE STARTING BALANCE EACH DAY
+   if (time1=="00:00"){ newdaybalance = balance ; }
+ 
+   
+      //CLOSE ALL OPEN AND PENDING ORDERS WHEN INPUT DAILY EQUITY LOSS LIMIT IS REACHED
+     for(orders=OrdersTotal()-1, positions=PositionsTotal()-1; positions>=0 || orders>=0;positions--,orders--)
+     {
+      ulong numTicket = PositionGetTicket(positions);
+      ulong numOrderTicket = OrderGetTicket(orders);  
+         //Comment("equity is ",equity,"\nbalance is ",balance,"\nnew day balance is ",newdaybalance,"\ntime is ",time1);
+         if ( (equity) < ((newdaybalance) - (newdaybalance * (inpEquityEquivalent / 100)))){  
+             
+                  if (PositionGetString(POSITION_SYMBOL) != _Symbol ) continue; //|| PositionGetInteger(POSITION_MAGIC) != magicNumber) continue;
+                     if (orderType == POSITION_TYPE_BUY || orderType == POSITION_TYPE_SELL) {
+                     trade.PositionClose(numTicket);
+                     }
+                     if(orderPendingType==ORDER_TYPE_BUY_LIMIT || orderPendingType==ORDER_TYPE_SELL_LIMIT ||
+                     orderPendingType==ORDER_TYPE_BUY_STOP||orderPendingType==ORDER_TYPE_SELL_STOP
+                     ||orderPendingType==ORDER_TYPE_BUY_STOP_LIMIT||orderPendingType==ORDER_TYPE_SELL_STOP_LIMIT)
+                     {
+                     trade.OrderDelete(numOrderTicket);
+                     }
+                  }        
+               }
+             
+     
+      //DISABLE TRADING AND REMOVE EXPERT ADVISOR WHEN PENDING/OPEN ORDER IS CLOSED
+      ulong ticket = 0;
+      HistorySelect(iTime(_Symbol,PERIOD_D1,0),currentTime1);
+      for(int i=0; i< HistoryDealsTotal(); i++)
+      {
+         if ( (equity) < ((newdaybalance) - (newdaybalance * (inpEquityEquivalent / 100)))){
+            if((ticket=HistoryDealGetTicket(i))>0) {
+           
+         string symbol = HistoryDealGetString(ticket,DEAL_SYMBOL);
+         ulong magic = (ulong)HistoryDealGetInteger(ticket,DEAL_MAGIC);
+         
+      if(symbol == _Symbol || magic == magicNumber)  ExpertRemove();
+      }
+    }
+  }
+ return (INIT_SUCCEEDED);
+}
+
+//--- DEACTIVATE BOT IF ABSOLUTE DRAWDOWN LIMIT IS REACHED (FTMO RULE)---//
+
+int absoluteDrawdownLimit (double inpEquityEquivalent, double inpBalanceDrawdown){
+   
+   double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+   int orderType = (int)PositionGetInteger(POSITION_TYPE) ;
+   int orderPendingType = (int)OrderGetInteger(ORDER_TYPE);
+   int positions, orders;
+   datetime currentTime1 = TimeCurrent();
+   
+      //CLOSE ALL OPEN AND PENDING ORDERS WHEN INPUT ABSOLUTE DRAWDOWN LIMIT IS REACHED
+     for(orders=OrdersTotal()-1, positions=PositionsTotal()-1; positions>=0 || orders>=0;positions--,orders--) {
+     //Comment("equity is ",equity,"\nbalance is ",BalanceDrawdown);
+      if ( (equity) < ((inpBalanceDrawdown) - (inpBalanceDrawdown * (inpEquityEquivalent / 100)))){
+     
+         ulong numTicket = PositionGetTicket(positions);
+         ulong numOrderTicket = OrderGetTicket(orders);  
+           
+                  if (PositionGetString(POSITION_SYMBOL) != _Symbol || PositionGetInteger(POSITION_MAGIC) != magicNumber) continue;
+                     if (orderType == POSITION_TYPE_BUY || orderType == POSITION_TYPE_SELL) {
+                     trade.PositionClose(numTicket);
+                     }
+                     if(orderPendingType==ORDER_TYPE_BUY_LIMIT || orderPendingType==ORDER_TYPE_SELL_LIMIT ||
+                     orderPendingType==ORDER_TYPE_BUY_STOP||orderPendingType==ORDER_TYPE_SELL_STOP
+                     ||orderPendingType==ORDER_TYPE_BUY_STOP_LIMIT||orderPendingType==ORDER_TYPE_SELL_STOP_LIMIT)
+                     {
+                     trade.OrderDelete(numOrderTicket);
+                     }
+                  }        
+               }
+     
+      //DISABLE TRADING AND REMOVE EXPERT ADVISOR WHEN PENDING/OPEN ORDER IS CLOSED
+      ulong ticket = 0;
+      HistorySelect(iTime(_Symbol,PERIOD_D1,0),currentTime1);
+      for(int i=0; i< HistoryDealsTotal(); i++)
+      {
+         if ( (equity) < ((inpBalanceDrawdown) - (inpBalanceDrawdown * (inpEquityEquivalent / 100)))){
+            if((ticket=HistoryDealGetTicket(i))>0) {
+           
+         string symbol = HistoryDealGetString(ticket,DEAL_SYMBOL);
+         ulong magic = (ulong)HistoryDealGetInteger(ticket,DEAL_MAGIC);
+         
+      if(symbol == _Symbol || magic == magicNumber)  ExpertRemove();
+      }
+    }
+  }
+ return (INIT_SUCCEEDED);
+}
+
+//---MOVE SL HIGH TP LOW---//
+
+   void moveSLHighTPLow(double inputAsk,double inputBid,int inputSL,int inputTP) {
+
+   ulong inpMagic = 0;
+   double orderOpenPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+   double orderStopLoss = PositionGetDouble(POSITION_SL);
+   ulong orderTicket = PositionGetInteger(POSITION_TICKET);
+   double orderTakeProfit = PositionGetDouble(POSITION_TP);
+   
+      for(int i=PositionsTotal()-1; i>=0; i--)
+      {
+         if(PositionGetTicket(i)==0) continue;
+         if(PositionGetTicket(i)>0)
+         {
+            if(
+            PositionGetString(POSITION_SYMBOL)==_Symbol
+            && PositionGetInteger(POSITION_MAGIC)==inpMagic
+            ) {
+               //ORDER TYPE MUST BE THE SAME
+               if ((PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY))
+               {  
+                  //PRICE WAS ALREADY MODIFIED    
+                  if ((orderOpenPrice - orderStopLoss) < (orderTakeProfit-orderOpenPrice))
+                  {
+                     trade.PositionModify(
+                     orderTicket //CHOOSE THE CORRECT TICKET
+                     ,(inputAsk - ((inputSL)*getPipValue())) // SL HAS BEEN CHANGED
+                     ,(inputAsk + ((inputTP)*getPipValue()))); // TP HAS BEEN CHANGED
+                     }
+                   }
+                else if((PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_SELL))
+               {  
+                  //PRICE WAS ALREADY MODIFIED    
+                  if ((orderStopLoss - orderOpenPrice) < (orderOpenPrice - orderTakeProfit))
+                  {
+                     trade.PositionModify(
+                     orderTicket //CHOOSE THE CORRECT TICKET
+                     ,(inputBid + ((inputSL)*getPipValue()))  // SL HAS BEEN CHANGED
+                     ,(inputBid - ((inputTP)*getPipValue()))); // TP HAS BEEN CHANGED
+                     }
+                   }            
+                }
+             }
+          }
+       }
